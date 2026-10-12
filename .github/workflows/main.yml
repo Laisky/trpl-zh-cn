@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: '1'
+      CARGO_HOME: ${{ runner.temp }}/book-cargo
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,11 +27,17 @@ jobs:
         run: |
           rustup toolchain install 1.58.0 --profile minimal
           rustup override set 1.58.0
-      - name: Fetch locked example dependencies
+      - name: Vendor locked dependencies with the fetch tool
         run: |
-          for name in listing-02-02 listing-02-03 listing-02-04 listing-02-05 listing-02-06 no-listing-03-convert-string-to-number no-listing-04-looping no-listing-05-quitting; do
-            cargo fetch --locked --manifest-path "listings/ch02-guessing-game-tutorial/$name/Cargo.toml"
+          mkdir -p "$CARGO_HOME"
+          names=(listing-02-02 listing-02-03 listing-02-04 listing-02-05 listing-02-06 no-listing-03-convert-string-to-number no-listing-04-looping no-listing-05-quitting)
+          sync_args=()
+          for name in "${names[@]:1}"; do
+            sync_args+=(--sync "listings/ch02-guessing-game-tutorial/$name/Cargo.toml")
           done
+          cargo +stable vendor --locked --versioned-dirs \
+            --manifest-path "listings/ch02-guessing-game-tutorial/${names[0]}/Cargo.toml" \
+            "${sync_args[@]}" "$RUNNER_TEMP/book-vendor" > "$CARGO_HOME/config.toml"
       - name: Fast teaching behavior regressions
         env:
           CARGO: cargo
