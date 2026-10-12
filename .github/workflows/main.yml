@@ -1,6 +1,7 @@
 name: Book checks and publication
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -48,7 +49,7 @@ jobs:
 
   publish:
     name: Render and publish approved main branch
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: examples
     runs-on: ubuntu-latest
     timeout-minutes: 25
