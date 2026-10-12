@@ -13,7 +13,6 @@ jobs:
     timeout-minutes: 10
     env:
       CARGO_BUILD_JOBS: '1'
-      CARGO_HOME: ${{ runner.temp }}/book-cargo
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,6 +26,9 @@ jobs:
         run: |
           rustup toolchain install 1.58.0 --profile minimal
           rustup override set 1.58.0
+          echo "CARGO_HOME=$RUNNER_TEMP/book-cargo" >> "$GITHUB_ENV"
+          cargo --version
+          rustc --version
       - name: Vendor locked dependencies with the fetch tool
         run: |
           mkdir -p "$CARGO_HOME"
@@ -60,7 +62,7 @@ jobs:
           cp -a book/html/. book-publish/
           find book/latex-pdf -maxdepth 1 -name '*.pdf' -exec cp '{}' book-publish/ ';'
       - name: Deploy gh-pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./book-publish
