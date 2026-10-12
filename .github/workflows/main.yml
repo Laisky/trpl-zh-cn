@@ -1,77 +1,70 @@
-name: CI
+name: Book checks and publication
+
 on:
-  # Trigger the workflow on push or pull request,
-  # but only for the main branch
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  build:
-    name: Build
+  examples:
+    name: Fast Rust 1.58 behavior units
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: '1'
     steps:
-    - uses: actions/checkout@main
-    - name: Update rustup
-      run: rustup self update
-    - name: Install Rust
-      run: |
-        rustup set profile minimal
-        rustup toolchain install 1.58 -c rust-docs
-        rustup default 1.58
-    - name: Install mdbook
-      run: |
-        mkdir bin
-        curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.14/mdbook-v0.4.14-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=bin
-        echo "$(pwd)/bin" >> ${GITHUB_PATH}
-    - name: Install mdbook-latex-pdf
-      run: |
-        curl -sL -o bin/mdbook-latex-pdf https://github.com/KaiserY/mdbook-latex-pdf/releases/download/0.1.0/mdbook-latex-pdf-x86_64-unknown-linux-gnu
-        chmod +x bin/mdbook-latex-pdf
-        echo "$(pwd)/bin" >> ${GITHUB_PATH}
-        pip install --upgrade --force-reinstall Pygments
-    - name: Install font
-      run: |
-        mkdir fonts
-        mkdir -p ~/.local/share/fonts
-        curl -sL -o Noto_Sans.zip https://fonts.google.com/download?family=Noto%20Sans
-        unzip Noto_Sans.zip -d fonts/Noto_Sans
-        curl -sL -o Noto_Sans_SC.zip https://fonts.google.com/download?family=Noto%20Sans%20SC
-        unzip Noto_Sans_SC.zip -d fonts/Noto_Sans_SC
-        curl -sL -o Noto_Sans_Mono.zip https://fonts.google.com/download?family=Noto%20Sans%20Mono
-        unzip Noto_Sans_Mono.zip -d fonts/Noto_Sans_Mono
-        curl -sL -o Noto_Sans_KR.zip https://fonts.google.com/download?family=Noto%20Sans%20KR
-        unzip Noto_Sans_KR.zip -d fonts/Noto_Sans_KR
-        curl -sL -o Noto_Sans_Thai.zip https://fonts.google.com/download?family=Noto%20Sans%20Thai
-        unzip Noto_Sans_Thai.zip -d fonts/Noto_Sans_Thai
-        curl -sL -o Noto_Sans_Arabic.zip https://fonts.google.com/download?family=Noto%20Sans%20Arabic
-        unzip Noto_Sans_Arabic.zip -d fonts/Noto_Sans_Arabic
-        curl -sL -o Noto_Sans_Hebrew.zip https://fonts.google.com/download?family=Noto%20Sans%20Hebrew
-        unzip Noto_Sans_Hebrew.zip -d fonts/Noto_Sans_Hebrew
-        curl -sL -o Noto_Sans_Devanagari.zip https://fonts.google.com/download?family=Noto%20Sans%20Devanagari
-        unzip Noto_Sans_Devanagari.zip -d fonts/Noto_Sans_Devanagari
-        mv fonts/* ~/.local/share/fonts/
-        fc-cache -rv
-    - name: Report versions
-      run: |
-        rustup --version
-        rustc -Vv
-        mdbook --version
-    - name: Run mdBook Build
-      run:  |
-        mdbook build
-        mv book/html/* book/
-        mv "book/latex-pdf/Rust 程序设计语言 简体中文版.pdf" book/
-        rm -r book/html/
-        rm -rf book/latex-pdf/
-    - name: Deploy gh-pages
-      if: ${{ github.ref == 'refs/heads/main' }}
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./book
-        force_orphan: true
-        enable_jekyll: true
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Source and script hygiene
+        run: |
+          git diff --check HEAD^ HEAD
+          bash -n .github/ci/render-book.sh
+          python3 -m py_compile tests/test_guessing_examples.py
+      - name: Install supported compiler
+        run: |
+          rustup toolchain install 1.58.0 --profile minimal
+          rustup override set 1.58.0
+          echo "CARGO_HOME=$RUNNER_TEMP/book-cargo" >> "$GITHUB_ENV"
+          cargo --version
+          rustc --version
+      - name: Vendor locked dependencies with the fetch tool
+        run: |
+          mkdir -p "$CARGO_HOME"
+          names=(listing-02-02 listing-02-03 listing-02-04 listing-02-05 listing-02-06 no-listing-03-convert-string-to-number no-listing-04-looping no-listing-05-quitting)
+          sync_args=()
+          for name in "${names[@]:1}"; do
+            sync_args+=(--sync "listings/ch02-guessing-game-tutorial/$name/Cargo.toml")
+          done
+          cargo +stable vendor --locked --versioned-dirs \
+            --manifest-path "listings/ch02-guessing-game-tutorial/${names[0]}/Cargo.toml" \
+            "${sync_args[@]}" "$RUNNER_TEMP/book-vendor" > "$CARGO_HOME/config.toml"
+      - name: Fast teaching behavior regressions
+        env:
+          CARGO: cargo
+          TEST_BUILD_DIR: ${{ runner.temp }}/book-example-targets
+        run: timeout 240 python3 -m unittest discover -s tests -v
+
+  publish:
+    name: Render and publish approved main branch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render with qualified pinned runtime
+        run: bash .github/ci/render-book.sh "$PWD/book"
+      - name: Assemble public HTML and PDF only
+        run: |
+          mkdir -p book-publish
+          cp -a book/html/. book-publish/
+          find book/latex-pdf -maxdepth 1 -name '*.pdf' -exec cp '{}' book-publish/ ';'
+      - name: Deploy gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./book-publish
+          force_orphan: true
+          enable_jekyll: true
